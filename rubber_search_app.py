@@ -3,28 +3,31 @@
 橡膠配方規格篩選系統
 - 勾選要篩選的規格（Hardness / Tensile Strength / Elongation / 100% Modulus / 300% Modulus / Compression Set / Specific Gravity）
 - 每項可設「下限」、「上限」或「範圍」
-- 篩選結果以清單顯示，點選後右側嵌入 PDF 並自動跳到對應頁面
+- 篩選結果以表格顯示，點選後右側渲染 PDF 頁面圖片以確保雲端版本相容性
 """
 
 from __future__ import annotations
 
-import base64
 import json
-import subprocess
-import sys
+import os
+import time
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
+import pandas as pd
+import pdfplumber
+from PIL import Image
 
 # ─────────────────────────────────────────────
-BASE_DIR   = Path(__file__).resolve().parent
-JSON_PATH  = BASE_DIR / "formulary_data.json"
-PDF_PATH   = BASE_DIR / "Rubber Formulary EPDM.pdf"
+# Path configuration
+# ─────────────────────────────────────────────
+BASE_DIR     = Path(__file__).resolve().parent
+JSON_PATH    = BASE_DIR / "formulary_data.json"
+PDF_PATH     = BASE_DIR / "Rubber Formulary EPDM.pdf"
 PARSE_SCRIPT = BASE_DIR / "parse_to_json.py"
 
 # ─────────────────────────────────────────────
-# 欄位設定（顯示名稱、單位、資料鍵）
+# 欄位設定
 # ─────────────────────────────────────────────
 FIELDS = [
     {"key": "hardness",          "label": "Hardness",          "unit": "Shore A"},
@@ -49,13 +52,11 @@ html, body, [class*="css"] {
     font-family: 'Inter', sans-serif;
 }
 
-/* Page background */
 .stApp {
     background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
     min-height: 100vh;
 }
 
-/* Sidebar */
 section[data-testid="stSidebar"] {
     background: rgba(15, 12, 41, 0.95) !important;
     border-right: 1px solid rgba(255,255,255,0.08);
@@ -64,7 +65,6 @@ section[data-testid="stSidebar"] * {
     color: #e2e8f0 !important;
 }
 
-/* Main title */
 h1 {
     background: linear-gradient(90deg, #a78bfa, #60a5fa, #34d399);
     -webkit-background-clip: text;
@@ -75,44 +75,6 @@ h1 {
     letter-spacing: -0.5px;
 }
 
-/* Cards */
-.formula-card {
-    background: rgba(255,255,255,0.05);
-    border: 1px solid rgba(255,255,255,0.10);
-    border-radius: 12px;
-    padding: 14px 18px;
-    margin-bottom: 10px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    backdrop-filter: blur(8px);
-}
-.formula-card:hover {
-    border-color: rgba(167,139,250,0.5);
-    background: rgba(167,139,250,0.08);
-    transform: translateY(-1px);
-    box-shadow: 0 8px 30px rgba(167,139,250,0.2);
-}
-.formula-card.selected {
-    border-color: #a78bfa;
-    background: rgba(167,139,250,0.15);
-    box-shadow: 0 0 0 2px rgba(167,139,250,0.3);
-}
-
-/* Spec badge */
-.spec-badge {
-    display: inline-block;
-    background: rgba(96,165,250,0.15);
-    border: 1px solid rgba(96,165,250,0.3);
-    border-radius: 6px;
-    padding: 2px 8px;
-    font-size: 0.72rem;
-    color: #93c5fd !important;
-    margin-right: 5px;
-    margin-top: 4px;
-    white-space: nowrap;
-}
-
-/* Filter section header */
 .filter-header {
     font-size: 0.70rem;
     font-weight: 600;
@@ -123,26 +85,6 @@ h1 {
     margin-top: 16px;
 }
 
-/* Metric boxes */
-.metric-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-top: 6px;
-}
-.metric-box {
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.10);
-    border-radius: 8px;
-    padding: 8px 14px;
-    text-align: center;
-    min-width: 90px;
-}
-.metric-label { font-size: 0.62rem; color:#94a3b8; text-transform:uppercase; letter-spacing:0.8px; }
-.metric-value { font-size: 1.1rem; font-weight:600; color:#e2e8f0; }
-.metric-unit  { font-size: 0.65rem; color:#6b7280; }
-
-/* Result count chip */
 .result-chip {
     display:inline-block;
     background: linear-gradient(90deg, #a78bfa22, #60a5fa22);
@@ -155,7 +97,6 @@ h1 {
     margin-bottom: 12px;
 }
 
-/* Streamlit button override */
 div.stButton > button {
     background: linear-gradient(90deg, #7c3aed, #2563eb) !important;
     color: white !important;
@@ -171,20 +112,10 @@ div.stButton > button:hover {
     box-shadow: 0 4px 15px rgba(124,58,237,0.4) !important;
 }
 
-/* Checkbox and radio color */
 .stCheckbox label, .stRadio label { color: #e2e8f0 !important; }
 
-/* Scrollable result list */
-.result-scroll {
-    max-height: 65vh;
-    overflow-y: auto;
-    padding-right: 4px;
-}
-
-/* Divider */
 hr { border-color: rgba(255,255,255,0.08) !important; }
 
-/* Number input */
 div[data-testid="stNumberInput"] input {
     background: rgba(255,255,255,0.06) !important;
     border: 1px solid rgba(255,255,255,0.15) !important;
@@ -192,13 +123,11 @@ div[data-testid="stNumberInput"] input {
     border-radius: 6px;
 }
 
-/* Info/warning */
 .stAlert {
     border-radius: 10px !important;
 }
 </style>
 """
-
 
 # ─────────────────────────────────────────────
 # Data Loading
@@ -206,33 +135,25 @@ div[data-testid="stNumberInput"] input {
 
 @st.cache_data(show_spinner=False)
 def load_data() -> list[dict]:
-    """載入 formulary_data.json；若不存在則自動執行解析腳本。"""
     if not JSON_PATH.exists():
-        if PARSE_SCRIPT.exists():
-            subprocess.run([sys.executable, str(PARSE_SCRIPT)], check=True)
-        else:
-            return []
-    return json.loads(JSON_PATH.read_text(encoding="utf-8"))
+        return []
+    try:
+        return json.loads(JSON_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return []
 
-
-@st.cache_data(show_spinner=False)
-def get_pdf_b64() -> str | None:
-    if not PDF_PATH.exists():
-        return None
-    return base64.standard_b64encode(PDF_PATH.read_bytes()).decode("ascii")
-
+@st.cache_resource
+def get_pdf_doc():
+    """使用 pdfplumber 開啟並快取 PDF 文件對象"""
+    if PDF_PATH.exists():
+        return pdfplumber.open(PDF_PATH)
+    return None
 
 # ─────────────────────────────────────────────
 # Filtering
 # ─────────────────────────────────────────────
 
 def apply_filters(records: list[dict], active_filters: dict) -> list[dict]:
-    """
-    active_filters = {
-        "hardness": {"mode": "Min (≥)", "lo": 60, "hi": None},
-        ...
-    }
-    """
     out = []
     for rec in records:
         pass_all = True
@@ -256,29 +177,50 @@ def apply_filters(records: list[dict], active_filters: dict) -> list[dict]:
             out.append(rec)
     return out
 
-
-import pandas as pd
-import os
-import time
-import streamlit.components.v1 as components
-
 # ─────────────────────────────────────────────
 # UI helpers
 # ─────────────────────────────────────────────
 
-def render_pdf(page: int, b64: str) -> None:
-    # 解決雲端版 (Streamlit Cloud) 點選後畫面不更新的問題
-    # 透過 st.markdown 直接注入 embed 標籤，並給予一個隨機 ID 讓瀏覽器強迫重繪
-    ts = time.time()
-    src = f"data:application/pdf;base64,{b64}#page={page}"
-    
-    html = f"""
-    <div id="pdf-view-container-{ts}" style="width:100%; height:800px;">
-        <embed src="{src}" type="application/pdf" width="100%" height="800px" style="border:none; border-radius:10px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);" />
-    </div>
+def render_pdf(page_num: int) -> None:
     """
-    st.markdown(html, unsafe_allow_html=True)
+    將 PDF 的特定頁面渲染為圖片並顯示。
+    解決雲端版 (Streamlit Cloud) 的 iframe 安全限制問題。
+    """
+    doc = get_pdf_doc()
+    if doc is None:
+        st.error(f"找不到 PDF 檔案：{PDF_PATH.name}")
+        return
 
+    try:
+        if page_num < 1 or page_num > len(doc.pages):
+            st.error(f"頁碼 {page_num} 超出範圍 (總計 {len(doc.pages)} 頁)")
+            return
+            
+        page = doc.pages[page_num - 1]
+        
+        with st.spinner(f"正在渲染第 {page_num} 頁..."):
+            # 渲染為圖片 (解析度 150 適合瀏覽器閱讀)
+            img = page.to_image(resolution=150).original
+            
+            # 顯示圖片
+            st.image(
+                img, 
+                use_container_width=True, 
+                caption=f"PDF 第 {page_num} 頁渲染圖 (來自 {PDF_PATH.name})",
+                output_format="JPEG"
+            )
+            
+            # 提供下載連結作為備案
+            with open(PDF_PATH, "rb") as f:
+                st.download_button(
+                    label="💾 下載原始 PDF 存檔",
+                    data=f,
+                    file_name=PDF_PATH.name,
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+    except Exception as e:
+        st.error(f"渲染 PDF 發生錯誤: {e}")
 
 # ─────────────────────────────────────────────
 # MAIN
@@ -300,7 +242,6 @@ def main():
         st.session_state.selected_title = ""
 
     records = load_data()
-    pdf_b64 = get_pdf_b64()
 
     # ── SIDEBAR ──────────────────────────────────
     with st.sidebar:
@@ -351,12 +292,14 @@ def main():
                 st.markdown("---")
 
         st.markdown("---")
-        # Re-parse button - Only show if not on the cloud (simple check)
-        is_cloud = os.environ.get("HOME") == "/home/appuser"
+        # 偵測是否為雲端環境
+        is_cloud = os.environ.get("HOME") == "/home/appuser" or "STREAMLIT_RUNTIME_ENV" in os.environ
         if not is_cloud:
             if st.button("🔄 重新解析文字庫 (本機專用)", use_container_width=True):
                 if PARSE_SCRIPT.exists():
                     with st.spinner("解析中…"):
+                        import subprocess
+                        import sys
                         subprocess.run([sys.executable, str(PARSE_SCRIPT)], check=True)
                     st.cache_data.clear()
                     st.success("解析完成！")
@@ -368,7 +311,7 @@ def main():
     col_title, _ = st.columns([3, 1])
     with col_title:
         st.title("🧪 橡膠配方規格篩選系統")
-        st.caption("從 Rubber Formulary EPDM 中依規格快速篩選配方 · 點選結果會自動顯示對應的 PDF 頁面")
+        st.caption("從 Rubber Formulary EPDM 中依規格快速篩選配方 · 點選結果會自動顯示對應的 PDF 頁面影像")
 
     st.markdown("---")
 
@@ -388,20 +331,14 @@ def main():
         if n == 0:
             st.warning("目前篩選條件下無符合結果，請調整規格範圍。", icon="⚠️")
         else:
-            # 轉換資料成 DataFrame 以表格呈現
             df = pd.DataFrame(filtered)
-            
-            # 定義顯示欄位
             display_cols = [
                 "printed_page", "page", "title", "supplier", "hardness", "tensile_strength", 
                 "elongation", "modulus_100", "modulus_300", "compression_set", "specific_gravity"
             ]
-            
-            # 確保欄位存在
             existing_cols = [c for c in display_cols if c in df.columns]
             display_df = df[existing_cols].copy()
             
-            # 重新命名欄位名稱使其更具可讀性
             rename_map = {
                 "page": "PDF Page", 
                 "printed_page": "Book Page",
@@ -417,9 +354,8 @@ def main():
             }
             display_df.rename(columns=rename_map, inplace=True)
             
-            st.caption("👈 點擊表格左側核取方塊以查看對應 PDF 頁面")
+            st.caption("👈 點擊表格左側核取方塊以查看對應 PDF 頁面圖片")
 
-            # 顯示 dataframe 並啟用單行選取功能
             event = st.dataframe(
                 display_df,
                 use_container_width=True,
@@ -429,7 +365,6 @@ def main():
                 selection_mode="single-row"
             )
             
-            # 檢查選取狀態
             selected_rows = event.selection.rows
             if selected_rows:
                 selected_idx = selected_rows[0]
@@ -447,7 +382,7 @@ def main():
                     display:flex;flex-direction:column;justify-content:center;align-items:center;'>
                     <div style='font-size:3.5rem'>📋</div>
                     <div style='color:#94a3b8;margin-top:16px;font-size:1rem;max-width:200px;text-align:center'>
-                        請從左側表格中點選配方以預覽 PDF
+                        請從左側表格中點選配方以預覽 PDF 影像
                     </div>
                 </div>
                 """,
@@ -460,7 +395,7 @@ def main():
                 f"""
                 <div style='margin-bottom:10px;'>
                     <span style='font-size:0.65rem;color:#6b7280;text-transform:uppercase;letter-spacing:1px;'>
-                        PDF 預覽
+                        PDF 預覽 (影像渲染)
                     </span>
                     <div style='font-size:1rem;font-weight:600;color:#e2e8f0;margin-top:2px;'>{title}</div>
                     <span style='font-size:0.75rem;color:#a78bfa;'>→ 跳至第 {page} 頁</span>
@@ -468,13 +403,7 @@ def main():
                 """,
                 unsafe_allow_html=True,
             )
-
-            if pdf_b64 is None:
-                st.error(f"找不到 PDF 檔案：{PDF_PATH}", icon="🚫")
-                st.info(f"請確認 PDF 位於：`{PDF_PATH}`")
-            else:
-                render_pdf(page, pdf_b64)
-
+            render_pdf(page)
 
 if __name__ == "__main__":
     main()
