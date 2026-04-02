@@ -267,15 +267,17 @@ import streamlit.components.v1 as components
 # ─────────────────────────────────────────────
 
 def render_pdf(page: int, b64: str) -> None:
-    # 使用 timestamp 確保每次點選都會強迫瀏覽器重新渲染該組組件，解決「第二次之後不出現」的問題
-    unique_key = f"pdf_viewer_{page}_{time.time()}"
+    # 解決雲端版 (Streamlit Cloud) 點選後畫面不更新的問題
+    # 透過 st.markdown 直接注入 embed 標籤，並給予一個隨機 ID 讓瀏覽器強迫重繪
+    ts = time.time()
     src = f"data:application/pdf;base64,{b64}#page={page}"
     
-    # 使用 iframe 搭配特定 key，強迫 Streamlit 在每次切換時重新生出一個全新的 iframe
     html = f"""
-    <iframe src="{src}" width="100%" height="800px" style="border:none; border-radius:8px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);"></iframe>
+    <div id="pdf-view-container-{ts}" style="width:100%; height:800px;">
+        <embed src="{src}" type="application/pdf" width="100%" height="800px" style="border:none; border-radius:10px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);" />
+    </div>
     """
-    components.html(html, height=800, key=unique_key)
+    st.markdown(html, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────
@@ -349,16 +351,18 @@ def main():
                 st.markdown("---")
 
         st.markdown("---")
-        # Re-parse button
-        if st.button("🔄 重新解析文字庫", use_container_width=True):
-            if PARSE_SCRIPT.exists():
-                with st.spinner("解析中…"):
-                    subprocess.run([sys.executable, str(PARSE_SCRIPT)], check=True)
-                st.cache_data.clear()
-                st.success("解析完成！")
-                st.rerun()
-            else:
-                st.error(f"找不到解析腳本：{PARSE_SCRIPT}")
+        # Re-parse button - Only show if not on the cloud (simple check)
+        is_cloud = os.environ.get("HOME") == "/home/appuser"
+        if not is_cloud:
+            if st.button("🔄 重新解析文字庫 (本機專用)", use_container_width=True):
+                if PARSE_SCRIPT.exists():
+                    with st.spinner("解析中…"):
+                        subprocess.run([sys.executable, str(PARSE_SCRIPT)], check=True)
+                    st.cache_data.clear()
+                    st.success("解析完成！")
+                    st.rerun()
+                else:
+                    st.error(f"找不到解析腳本：{PARSE_SCRIPT}")
 
     # ── MAIN AREA ────────────────────────────────
     col_title, _ = st.columns([3, 1])
