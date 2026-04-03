@@ -1,34 +1,41 @@
 #!/usr/bin/env python3
 """
 橡膠配方規格篩選系統
-- 勾選要篩選的規格（Hardness / Tensile Strength / Elongation / 100% Modulus / 300% Modulus / Compression Set / Specific Gravity）
-- 每項可設「下限」、「上限」或「範圍」
-- 篩選結果以表格顯示，點選後右側渲染 PDF 頁面圖片以確保雲端版本相容性
+- [A] - [F] 模組化全寬排版 (垂直堆疊)
+- 支援雙主題切換 (Light / Dark)
+- 強化區塊邊界感
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import time
+import io
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 import pandas as pd
 import pdfplumber
 from PIL import Image
+from pypdf import PdfReader, PdfWriter
 
 # ─────────────────────────────────────────────
-# Path configuration
+# [B] Header Bar Configuration & Paths
 # ─────────────────────────────────────────────
 BASE_DIR     = Path(__file__).resolve().parent
 JSON_PATH    = BASE_DIR / "formulary_data.json"
-PDF_PATH     = BASE_DIR / "Rubber Formulary EPDM.pdf"
-PARSE_SCRIPT = BASE_DIR / "parse_to_json.py"
 
-# ─────────────────────────────────────────────
-# 欄位設定
-# ─────────────────────────────────────────────
+PDF_MAP = {
+    "ACM": "Rubber Formulary ACM.pdf",
+    "CR": "Rubber Formulary CR.pdf",
+    "EPDM": "Rubber Formulary EPDM.pdf",
+    "NBR": "Rubber Formulary NBR.pdf",
+    "NR/SBR/BR": "Rubber Formulary NR:SBR:BR:IIR.pdf",
+}
+
 FIELDS = [
     {"key": "hardness",          "label": "Hardness",          "unit": "Shore A"},
     {"key": "tensile_strength",  "label": "Tensile Strength",  "unit": "MPa"},
@@ -39,371 +46,293 @@ FIELDS = [
     {"key": "specific_gravity",  "label": "Specific Gravity",  "unit": ""},
 ]
 
-FILTER_MODES = ["Min (≥)", "Max (≤)", "Range (≥ and ≤)"]
+RUBBER_TYPES = ["NR/SBR/BR", "EPDM", "NBR", "CR", "ACM"]
 
 # ─────────────────────────────────────────────
-# CSS
+# Themes Styling Constants [B] & [A] Compactness
 # ─────────────────────────────────────────────
-CUSTOM_CSS = """
+
+COMMON_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+h1 { font-size: 2.2rem !important; font-weight: 800 !important; letter-spacing: -1px; margin-bottom: 0.1rem !important; }
+.filter-header { font-size: 0.70rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1.2px; margin-bottom: 8px; margin-top: 10px; }
+.result-chip { display:inline-block; border-radius: 6px; padding: 4px 12px; font-size:.85rem; font-weight:600; margin-bottom: 12px; }
+div.stButton > button { border: none !important; border-radius: 8px !important; font-weight: 600 !important; transition: all 0.2s !important; width: 100%; }
+.stCheckbox label { font-weight: 600 !important; font-size: 0.9rem !important; }
 
-html, body, [class*="css"] {
-    font-family: 'Inter', sans-serif;
-}
+/* [A] Sidebar Item Compactness */
+div[data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div { padding-top: 0 !important; padding-bottom: 0.2rem !important; }
+div[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p { margin-bottom: 0px !important; }
+div[data-testid="stSidebar"] hr { margin: 0.5rem 0 !important; }
 
-.stApp {
-    background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
-    min-height: 100vh;
-}
-
-section[data-testid="stSidebar"] {
-    background: rgba(15, 12, 41, 0.95) !important;
-    border-right: 1px solid rgba(255,255,255,0.08);
-}
-section[data-testid="stSidebar"] * {
-    color: #e2e8f0 !important;
-}
-
-h1 {
-    background: linear-gradient(90deg, #a78bfa, #60a5fa, #34d399);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    font-size: 2.2rem !important;
-    font-weight: 700;
-    letter-spacing: -0.5px;
-}
-
-.filter-header {
-    font-size: 0.70rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    color: #94a3b8 !important;
-    margin-bottom: 8px;
-    margin-top: 16px;
-}
-
-.result-chip {
-    display:inline-block;
-    background: linear-gradient(90deg, #a78bfa22, #60a5fa22);
-    border: 1px solid rgba(167,139,250,0.3);
-    border-radius: 20px;
-    padding: 4px 14px;
-    font-size:.85rem;
-    color:#a78bfa;
-    font-weight:600;
-    margin-bottom: 12px;
-}
-
-div.stButton > button {
-    background: linear-gradient(90deg, #7c3aed, #2563eb) !important;
-    color: white !important;
-    border: none !important;
-    border-radius: 8px !important;
-    font-weight: 500 !important;
-    transition: all 0.2s !important;
-    width: 100%;
-}
-div.stButton > button:hover {
-    opacity: 0.9;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 15px rgba(124,58,237,0.4) !important;
-}
-
-.stCheckbox label, .stRadio label { color: #e2e8f0 !important; }
-
-hr { border-color: rgba(255,255,255,0.08) !important; }
-
-div[data-testid="stNumberInput"] input {
-    background: rgba(255,255,255,0.06) !important;
-    border: 1px solid rgba(255,255,255,0.15) !important;
-    color: #e2e8f0 !important;
-    border-radius: 6px;
-}
-
-.stAlert {
-    border-radius: 10px !important;
+/* Section Box Styling for boundaries */
+.section-box {
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    border-width: 1px;
+    border-style: solid;
 }
 </style>
 """
 
+LIGHT_THEME_CSS = """
+<style>
+.stApp { background: #fdfdfd; color: #1e293b; }
+section[data-testid="stSidebar"] { background: #ffffff !important; border-right: 1px solid #e2e8f0 !important; }
+section[data-testid="stSidebar"] * { color: #334155 !important; }
+h1 { background: linear-gradient(90deg, #1e40af, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.filter-header { color: #64748b !important; }
+.result-chip { background: #eff6ff; border: 1px solid #bfdbfe; color:#2563eb; }
+div.stButton > button { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important; color: white !important; }
+.stCheckbox label { color: #334155 !important; }
+hr { border-color: #e2e8f0 !important; }
+div[data-testid="stNumberInput"] input { background: #ffffff !important; border: 1px solid #cbd5e1 !important; color: #1e293b !important; }
+div[data-testid="stPills"] button { background: #ffffff !important; border: 1px solid #e2e8f0 !important; color: #475569 !important; }
+div[data-testid="stPills"] button[aria-pressed="true"] { background: #3b82f6 !important; color: white !important; }
+div[data-testid="stDataFrame"] { background: #ffffff !important; border: 1px solid #e2e8f0 !important; }
+.section-box { background: #ffffff; border-color: #e2e8f0; }
+</style>
+"""
+
+DARK_THEME_CSS = """
+<style>
+.stApp { background: #0b0f19; color: #f8fafc; }
+section[data-testid="stSidebar"] { background: #111827 !important; border-right: 1px solid #1f2937 !important; }
+section[data-testid="stSidebar"] * { color: #cbd5e1 !important; }
+h1 { background: linear-gradient(90deg, #a78bfa, #60a5fa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.filter-header { color: #94a3b8 !important; }
+.result-chip { background: #1e293b; border: 1px solid #334155; color:#a78bfa; }
+div.stButton > button { background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%) !important; color: white !important; }
+.stCheckbox label { color: #cbd5e1 !important; }
+hr { border-color: #1f2937 !important; }
+div[data-testid="stNumberInput"] input { background: #1f2937 !important; border: 1px solid #374151 !important; color: #f8fafc !important; }
+div[data-testid="stPills"] button { background: #1f2937 !important; border: 1px solid #374151 !important; color: #cbd5e1 !important; }
+div[data-testid="stPills"] button[aria-pressed="true"] { background: #7c3aed !important; color: white !important; }
+div[data-testid="stDataFrame"] { background: #1f2937 !important; border: 1px solid #374151 !important; }
+.section-box { background: #111827; border-color: #1f2937; }
+</style>
+"""
+
 # ─────────────────────────────────────────────
-# Data Loading
+# Data & PDF Helpers
 # ─────────────────────────────────────────────
 
 @st.cache_data(show_spinner=False)
 def load_data() -> list[dict]:
-    if not JSON_PATH.exists():
-        return []
+    if not JSON_PATH.exists(): return []
     try:
-        return json.loads(JSON_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return []
+        data = json.loads(JSON_PATH.read_text(encoding="utf-8"))
+        for r in data:
+            if "rubber_type" not in r: r["rubber_type"] = "EPDM"
+        return data
+    except Exception: return []
 
 @st.cache_resource
-def get_pdf_doc():
-    """使用 pdfplumber 開啟並快取 PDF 文件對象"""
-    if PDF_PATH.exists():
-        return pdfplumber.open(PDF_PATH)
+def get_pdf_doc(rubber_type: str):
+    filename = PDF_MAP.get(rubber_type)
+    if not filename: return None
+    path = BASE_DIR / filename
+    if path.exists():
+        try: return pdfplumber.open(path)
+        except: return None
     return None
 
-# ─────────────────────────────────────────────
-# Filtering
-# ─────────────────────────────────────────────
-
-def apply_filters(records: list[dict], active_filters: dict) -> list[dict]:
+def apply_filters(records: list[dict], selected_types: list[str], active_filters: dict) -> list[dict]:
     out = []
     for rec in records:
+        if selected_types and rec.get("rubber_type") not in selected_types: continue
         pass_all = True
-        for key, cfg in active_filters.items():
+        for key, limits in active_filters.items():
             val = rec.get(key)
             if val is None:
-                pass_all = False
-                break
-            mode = cfg["mode"]
-            lo, hi = cfg["lo"], cfg["hi"]
-            if mode == "Min (≥)" and lo is not None and val < lo:
                 pass_all = False; break
-            if mode == "Max (≤)" and hi is not None and val > hi:
+            lo, hi = limits["lo"], limits["hi"]
+            if lo is not None and val < lo:
                 pass_all = False; break
-            if mode == "Range (≥ and ≤)":
-                if lo is not None and val < lo:
-                    pass_all = False; break
-                if hi is not None and val > hi:
-                    pass_all = False; break
-        if pass_all:
-            out.append(rec)
+            if hi is not None and val > hi:
+                pass_all = False; break
+        if pass_all: out.append(rec)
     return out
 
-# ─────────────────────────────────────────────
-# UI helpers
-# ─────────────────────────────────────────────
-
-def render_pdf(page_num: int) -> None:
-    """
-    將 PDF 的特定頁面渲染為圖片並顯示。
-    解決雲端版 (Streamlit Cloud) 的 iframe 安全限制問題。
-    """
-    doc = get_pdf_doc()
+def render_pdf_page_html(rubber_type: str, page_num: int, zoom_mode: str = "完整 A4 (符合頁面)"):
+    doc = get_pdf_doc(rubber_type)
     if doc is None:
-        st.error(f"找不到 PDF 檔案：{PDF_PATH.name}")
+        st.error(f"找不到檔案: {PDF_MAP.get(rubber_type, rubber_type)}")
         return
-
     try:
-        if page_num < 1 or page_num > len(doc.pages):
-            st.error(f"頁碼 {page_num} 超出範圍 (總計 {len(doc.pages)} 頁)")
-            return
-            
         page = doc.pages[page_num - 1]
+        img = page.to_image(resolution=150).original
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG")
+        img_str = base64.b64encode(buf.getvalue()).decode()
         
-        with st.spinner(f"正在渲染第 {page_num} 頁..."):
-            # 渲染為圖片 (解析度 150 適合瀏覽器閱讀)
-            img = page.to_image(resolution=150).original
+        if zoom_mode == "符合頁寬":
+            img_style = "width: 100%; height: auto;"
+        elif zoom_mode == "原始高畫質放大":
+            img_style = "width: 1400px; max-width: none;"
+        else: # "完整 A4 (符合頁面)"
+            img_style = "max-width: 100%; max-height: 800px; width: auto; height: auto;"
             
-            # 顯示圖片
-            st.image(
-                img, 
-                use_container_width=True, 
-                caption=f"PDF 第 {page_num} 頁渲染圖 (來自 {PDF_PATH.name})",
-                output_format="JPEG"
-            )
-            
-            # 提供下載連結作為備案
-            with open(PDF_PATH, "rb") as f:
-                st.download_button(
-                    label="💾 下載原始 PDF 存檔",
-                    data=f,
-                    file_name=PDF_PATH.name,
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-    except Exception as e:
-        st.error(f"渲染 PDF 發生錯誤: {e}")
+        html = f'''
+        <div style="width:100%; overflow-x:auto; text-align:center; padding:10px 0;">
+            <img src="data:image/jpeg;base64,{img_str}" style="{img_style} border-radius:8px; box-shadow: 0 4px 10px rgba(0,0,0,0.15);">
+        </div>
+        '''
+        st.markdown(html, unsafe_allow_html=True)
+    except Exception as e: st.error(f"渲染錯誤: {e}")
+
+def export_merged_pdf(selected_items: list[dict]) -> bytes:
+    writer = PdfWriter()
+    readers = {}
+    for item in selected_items:
+        rtype = item.get("rubber_type", "EPDM")
+        pnum = int(item.get("page", 1))
+        if rtype not in readers:
+            fname = PDF_MAP.get(rtype)
+            if fname and (BASE_DIR / fname).exists(): readers[rtype] = PdfReader(BASE_DIR / fname)
+            else: continue
+        reader = readers[rtype]
+        if 1 <= pnum <= len(reader.pages): writer.add_page(reader.pages[pnum - 1])
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
 
 # ─────────────────────────────────────────────
-# MAIN
+# UI Entry Point
 # ─────────────────────────────────────────────
 
 def main():
-    st.set_page_config(
-        page_title="橡膠配方規格篩選系統",
-        page_icon="🔬",
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
-    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
-
-    # session state
-    if "selected_page" not in st.session_state:
-        st.session_state.selected_page = None
-    if "selected_title" not in st.session_state:
-        st.session_state.selected_title = ""
+    st.set_page_config(page_title="橡膠配方規格篩選系統", page_icon="🧪", layout="wide")
+    
+    if "app_theme" not in st.session_state:
+        st.session_state.app_theme = "Light"
+        
+    st.markdown(COMMON_CSS, unsafe_allow_html=True)
+    if st.session_state.app_theme == "Light":
+        st.markdown(LIGHT_THEME_CSS, unsafe_allow_html=True)
+    else:
+        st.markdown(DARK_THEME_CSS, unsafe_allow_html=True)
 
     records = load_data()
 
-    # ── SIDEBAR ──────────────────────────────────
+    # ─────────────────────────────────────────────
+    # [A] Sidebar Filters (更緊湊)
+    # ─────────────────────────────────────────────
     with st.sidebar:
         st.markdown("## 🔬 規格篩選條件")
         st.markdown("---")
         st.markdown('<p class="filter-header">勾選要篩選的規格</p>', unsafe_allow_html=True)
 
         active_filters: dict = {}
-
         for field in FIELDS:
-            key   = field["key"]
-            label = field["label"]
-            unit  = field["unit"]
-            unit_str = f" ({unit})" if unit else ""
-
-            enabled = st.checkbox(f"**{label}**{unit_str}", key=f"chk_{key}")
-
+            key, label, unit = field["key"], field["label"], field["unit"]
+            enabled = st.checkbox(f"{label}", key=f"chk_{key}")
             if enabled:
-                mode = st.radio(
-                    "篩選方式",
-                    FILTER_MODES,
-                    key=f"mode_{key}",
-                    horizontal=False,
-                    label_visibility="collapsed",
-                )
+                c1, c2 = st.columns(2)
+                with c1: lo = st.number_input(f"下限 {unit}", value=None, key=f"lo_{key}", label_visibility="collapsed")
+                with c2: hi = st.number_input(f"上限 {unit}", value=None, key=f"hi_{key}", label_visibility="collapsed")
+                if lo is not None or hi is not None: active_filters[key] = {"lo": lo, "hi": hi}
+            st.markdown("---")
 
-                lo, hi = None, None
-
-                if mode in ("Min (≥)", "Range (≥ and ≤)"):
-                    lo = st.number_input(
-                        f"最小值{unit_str}",
-                        value=0.0,
-                        step=0.1 if key == "specific_gravity" else 1.0,
-                        key=f"lo_{key}",
-                        label_visibility="visible",
-                    )
-
-                if mode in ("Max (≤)", "Range (≥ and ≤)"):
-                    hi = st.number_input(
-                        f"最大值{unit_str}",
-                        value=100.0,
-                        step=0.1 if key == "specific_gravity" else 1.0,
-                        key=f"hi_{key}",
-                        label_visibility="visible",
-                    )
-
-                active_filters[key] = {"mode": mode, "lo": lo, "hi": hi}
-                st.markdown("---")
-
-        st.markdown("---")
-        # 偵測是否為雲端環境
-        is_cloud = os.environ.get("HOME") == "/home/appuser" or "STREAMLIT_RUNTIME_ENV" in os.environ
-        if not is_cloud:
-            if st.button("🔄 重新解析文字庫 (本機專用)", use_container_width=True):
-                if PARSE_SCRIPT.exists():
-                    with st.spinner("解析中…"):
-                        import subprocess
-                        import sys
-                        subprocess.run([sys.executable, str(PARSE_SCRIPT)], check=True)
-                    st.cache_data.clear()
-                    st.success("解析完成！")
-                    st.rerun()
-                else:
-                    st.error(f"找不到解析腳本：{PARSE_SCRIPT}")
-
-    # ── MAIN AREA ────────────────────────────────
-    col_title, _ = st.columns([3, 1])
+    # ─────────────────────────────────────────────
+    # [B] Header Bar
+    # ─────────────────────────────────────────────
+    col_title, col_theme = st.columns([5, 1])
     with col_title:
         st.title("🧪 橡膠配方規格篩選系統")
-        st.caption("從 Rubber Formulary EPDM 中依規格快速篩選配方 · 點選結果會自動顯示對應的 PDF 頁面影像")
+    with col_theme:
+        st.markdown('<div style="margin-bottom:15px"></div>', unsafe_allow_html=True)
+        new_theme = st.selectbox("🌓 主題", ["Light", "Dark"], index=0 if st.session_state.app_theme == "Light" else 1, label_visibility="collapsed")
+        if new_theme != st.session_state.app_theme:
+            st.session_state.app_theme = new_theme
+            st.rerun()
 
-    st.markdown("---")
+    # ─────────────────────────────────────────────
+    # [C] Type Pills
+    # ─────────────────────────────────────────────
+    st.markdown('<div class="section-box">', unsafe_allow_html=True)
+    st.markdown('<p class="filter-header">選擇膠種分組</p>', unsafe_allow_html=True)
+    selected_rubber_types = st.pills("膠種", RUBBER_TYPES, selection_mode="multi", label_visibility="collapsed")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    # Apply filters
-    if active_filters:
-        filtered = apply_filters(records, active_filters)
+    # Filter
+    filtered = apply_filters(records, selected_rubber_types, active_filters)
+    
+    # ─────────────────────────────────────────────
+    # [D] Results Grid (全寬)
+    # ─────────────────────────────────────────────
+    st.markdown('<div class="section-box">', unsafe_allow_html=True)
+    st.markdown(f'<div class="result-chip">🎯 找到 {len(filtered)} 筆配方</div>', unsafe_allow_html=True)
+    
+    if len(filtered) == 0:
+        st.warning("無符合結果。", icon="⚠️")
+        selected_items = []
     else:
-        filtered = records
+        df = pd.DataFrame(filtered)
+        display_cols = ["rubber_type", "printed_page", "page", "title", "supplier", "hardness", "tensile_strength", "elongation"]
+        existing_cols = [c for c in display_cols if c in df.columns]
+        display_df = df[existing_cols].copy()
+        
+        rename_map = {"rubber_type": "Type", "page": "PDF Page", "printed_page": "Book Page", "title": "Title", "supplier": "Supplier", "hardness": "Hardness", "tensile_strength": "TS (MPa)", "elongation": "Elong (%)"}
+        display_df.rename(columns=rename_map, inplace=True)
+        
+        event = st.dataframe(display_df, use_container_width=True, hide_index=True, height=450, on_select="rerun", selection_mode="multi-row")
+        selected_rows = event.selection.rows
+        selected_items = [filtered[i] for i in selected_rows] if selected_rows else []
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    col_list, col_pdf = st.columns([1, 1], gap="large")
-
-    # ── LEFT: Result list ──
-    with col_list:
-        n = len(filtered)
-        st.markdown(f'<div class="result-chip">🎯 找到 {n} 筆配方</div>', unsafe_allow_html=True)
-
-        if n == 0:
-            st.warning("目前篩選條件下無符合結果，請調整規格範圍。", icon="⚠️")
-        else:
-            df = pd.DataFrame(filtered)
-            display_cols = [
-                "printed_page", "page", "title", "supplier", "hardness", "tensile_strength", 
-                "elongation", "modulus_100", "modulus_300", "compression_set", "specific_gravity"
-            ]
-            existing_cols = [c for c in display_cols if c in df.columns]
-            display_df = df[existing_cols].copy()
+    # ─────────────────────────────────────────────
+    # [F] & [E] (垂直排序於下方)
+    # ─────────────────────────────────────────────
+    if not selected_items:
+        st.markdown('<div class="section-box" style="text-align:center; padding:60px 20px;"><div style="font-size:3rem">📋</div><div style="margin-top:10px;">請從上方表格中勾選配方以顯示預覽區域</div></div>', unsafe_allow_html=True)
+    else:
+        # [F] PDF Viewport (全寬預覽)
+        st.markdown('<div class="section-box">', unsafe_allow_html=True)
+        col_f1, col_f2, col_f3 = st.columns([3, 1, 5])
+        with col_f1:
+            st.markdown(f"### 📄 頁面預覽 (已選 {len(selected_items)} 頁)")
+        with col_f3:
+            zoom_options = ["完整 A4 (符合頁面)", "符合頁寬", "原始高畫質放大"]
+            if hasattr(st, "segmented_control"):
+                zoom_mode = st.segmented_control("檢視選項", zoom_options, default="完整 A4 (符合頁面)", label_visibility="collapsed")
+            else:
+                zoom_mode = st.radio("檢視選項", zoom_options, horizontal=True, label_visibility="collapsed")
+            if not zoom_mode: zoom_mode = "完整 A4 (符合頁面)"
             
-            rename_map = {
-                "page": "PDF Page", 
-                "printed_page": "Book Page",
-                "title": "Title", 
-                "supplier": "Supplier", 
-                "hardness": "Hardness (Shore A)", 
-                "tensile_strength": "TS (MPa)", 
-                "elongation": "Elong (%)", 
-                "modulus_100": "100% Mod (MPa)", 
-                "modulus_300": "300% Mod (MPa)", 
-                "compression_set": "Comp. Set (%)", 
-                "specific_gravity": "SG"
-            }
-            display_df.rename(columns=rename_map, inplace=True)
-            
-            st.caption("👈 點擊表格左側核取方塊以查看對應 PDF 頁面圖片")
+        st.markdown("---")
+        with st.container(height=900):
+            for i, item in enumerate(selected_items):
+                rtype = item.get("rubber_type", "EPDM")
+                pnum = int(item.get("page", 1))
+                st.markdown(f"**#{i+1} [{rtype}] {item.get('title','')}** (Page {pnum})")
+                render_pdf_page_html(rtype, pnum, zoom_mode)
+                st.markdown("---")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-            event = st.dataframe(
-                display_df,
-                use_container_width=True,
-                hide_index=True,
-                height=600,
-                on_select="rerun",
-                selection_mode="single-row"
-            )
-            
-            selected_rows = event.selection.rows
-            if selected_rows:
-                selected_idx = selected_rows[0]
-                st.session_state.selected_page = int(display_df.iloc[selected_idx]["PDF Page"])
-                st.session_state.selected_title = str(display_df.iloc[selected_idx]["Title"])
-
-    # ── RIGHT: PDF Preview ──
-    with col_pdf:
-        if st.session_state.selected_page is None:
-            st.markdown(
-                """
-                <div style='text-align:center;padding:80px 20px;
-                    background:rgba(255,255,255,0.03);border-radius:12px;
-                    border:1px dashed rgba(255,255,255,0.12);height:500px;
-                    display:flex;flex-direction:column;justify-content:center;align-items:center;'>
-                    <div style='font-size:3.5rem'>📋</div>
-                    <div style='color:#94a3b8;margin-top:16px;font-size:1rem;max-width:200px;text-align:center'>
-                        請從左側表格中點選配方以預覽 PDF 影像
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        else:
-            page  = st.session_state.selected_page
-            title = st.session_state.selected_title
-            st.markdown(
-                f"""
-                <div style='margin-bottom:10px;'>
-                    <span style='font-size:0.65rem;color:#6b7280;text-transform:uppercase;letter-spacing:1px;'>
-                        PDF 預覽 (影像渲染)
-                    </span>
-                    <div style='font-size:1rem;font-weight:600;color:#e2e8f0;margin-top:2px;'>{title}</div>
-                    <span style='font-size:0.75rem;color:#a78bfa;'>→ 跳至第 {page} 頁</span>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            render_pdf(page)
+        # [E] Export Hub (置底下載)
+        st.markdown('<div class="section-box">', unsafe_allow_html=True)
+        st.markdown("### 📥 匯出選取的頁面")
+        c_fn, c_btn = st.columns([3, 1])
+        with c_fn:
+            r_set = list(set([i.get("rubber_type","") for i in selected_items]))
+            r_str = r_set[0].lower() if len(r_set) == 1 else "rubber"
+            h_vals = [str(int(i["hardness"])) for i in selected_items if i.get("hardness") is not None]
+            h_str = f"{h_vals[0]}" if len(set(h_vals)) == 1 else ""
+            title_str = f"_{selected_items[0]['title']}" if len(selected_items) == 1 else ""
+            date_str = datetime.now().strftime("%Y%m%d")
+            default_fn = f"{r_str}{h_str}{title_str}_{date_str}.pdf".replace(" ", "_")
+            final_fn = st.text_input("存檔名稱設定", value=default_fn)
+        with c_btn:
+            st.markdown('<div style="margin-top:28px"></div>', unsafe_allow_html=True)
+            if st.button(f"🚀 合併並下載 PDF"):
+                pdf_bytes = export_merged_pdf(selected_items)
+                st.download_button("💾 點擊下載", data=pdf_bytes, file_name=final_fn, mime="application/pdf", use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
