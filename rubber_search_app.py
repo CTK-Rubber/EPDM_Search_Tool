@@ -25,8 +25,8 @@ from pypdf import PdfReader, PdfWriter
 # ─────────────────────────────────────────────
 # [B] Header Bar Configuration & Paths
 # ─────────────────────────────────────────────
-BASE_DIR     = Path(__file__).resolve().parent
-JSON_PATH    = BASE_DIR / "formulary_data.json"
+BASE_DIR = Path(__file__).resolve().parent
+JSON_PATH = BASE_DIR / "formulary_data.json"
 
 PDF_MAP = {
     "ACM": "Rubber Formulary ACM.pdf",
@@ -37,13 +37,13 @@ PDF_MAP = {
 }
 
 FIELDS = [
-    {"key": "hardness",          "label": "Hardness",          "unit": "Shore A"},
-    {"key": "tensile_strength",  "label": "Tensile Strength",  "unit": "MPa"},
-    {"key": "elongation",        "label": "Elongation",        "unit": "%"},
-    {"key": "modulus_100",       "label": "100% Modulus",      "unit": "MPa"},
-    {"key": "modulus_300",       "label": "300% Modulus",      "unit": "MPa"},
-    {"key": "compression_set",   "label": "Compression Set",   "unit": "%"},
-    {"key": "specific_gravity",  "label": "Specific Gravity",  "unit": ""},
+    {"key": "hardness", "label": "Hardness", "unit": "Shore A"},
+    {"key": "tensile_strength", "label": "Tensile Strength", "unit": "MPa"},
+    {"key": "elongation", "label": "Elongation", "unit": "%"},
+    {"key": "modulus_100", "label": "100% Modulus", "unit": "MPa"},
+    {"key": "modulus_300", "label": "300% Modulus", "unit": "MPa"},
+    {"key": "compression_set", "label": "Compression Set", "unit": "%"},
+    {"key": "specific_gravity", "label": "Specific Gravity", "unit": ""},
 ]
 
 RUBBER_TYPES = ["NR/SBR/BR", "EPDM", "NBR", "CR", "ACM"]
@@ -117,44 +117,72 @@ div[data-testid="stDataFrame"] { background: #1f2937 !important; border: 1px sol
 # Data & PDF Helpers
 # ─────────────────────────────────────────────
 
+
 @st.cache_data(show_spinner=False)
 def load_data() -> list[dict]:
-    if not JSON_PATH.exists(): return []
+    if not JSON_PATH.exists():
+        return []
     try:
         data = json.loads(JSON_PATH.read_text(encoding="utf-8"))
         for r in data:
-            if "rubber_type" not in r: r["rubber_type"] = "EPDM"
+            if "rubber_type" not in r:
+                r["rubber_type"] = "EPDM"
+
+            # 若原始資料無 hardness 欄位，但有 durometer，則視為 hardness
+            if r.get("hardness") is None and r.get("durometer") is not None:
+                duro = r.get("durometer")
+                try:
+                    r["hardness"] = float(duro)
+                except Exception:
+                    r["hardness"] = duro
+
         return data
-    except Exception: return []
+    except Exception:
+        return []
+
 
 @st.cache_resource
 def get_pdf_doc(rubber_type: str):
     filename = PDF_MAP.get(rubber_type)
-    if not filename: return None
+    if not filename:
+        return None
     path = BASE_DIR / filename
     if path.exists():
-        try: return pdfplumber.open(path)
-        except: return None
+        try:
+            return pdfplumber.open(path)
+        except:
+            return None
     return None
 
-def apply_filters(records: list[dict], selected_types: list[str], active_filters: dict) -> list[dict]:
+
+def apply_filters(
+    records: list[dict], selected_types: list[str], active_filters: dict
+) -> list[dict]:
     out = []
     for rec in records:
-        if selected_types and rec.get("rubber_type") not in selected_types: continue
+        if selected_types and rec.get("rubber_type") not in selected_types:
+            continue
         pass_all = True
         for key, limits in active_filters.items():
             val = rec.get(key)
             if val is None:
-                pass_all = False; break
+                pass_all = False
+                break
             lo, hi = limits["lo"], limits["hi"]
             if lo is not None and val < lo:
-                pass_all = False; break
+                pass_all = False
+                break
             if hi is not None and val > hi:
-                pass_all = False; break
-        if pass_all: out.append(rec)
+                pass_all = False
+                break
+        if pass_all:
+            out.append(rec)
     return out
 
-def render_pdf_page_html(rubber_type: str, page_num: int, zoom_mode: str = "完整 A4 (符合頁面)"):
+
+def render_pdf_page_html(
+    rubber_type: str, page_num: int, zoom_mode: str = "完整 A4 (符合頁面)"
+):
     doc = get_pdf_doc(rubber_type)
     if doc is None:
         st.error(f"找不到檔案: {PDF_MAP.get(rubber_type, rubber_type)}")
@@ -165,21 +193,23 @@ def render_pdf_page_html(rubber_type: str, page_num: int, zoom_mode: str = "完�
         buf = io.BytesIO()
         img.save(buf, format="JPEG")
         img_str = base64.b64encode(buf.getvalue()).decode()
-        
+
         if zoom_mode == "符合頁寬":
             img_style = "width: 100%; height: auto;"
         elif zoom_mode == "原始高畫質放大":
             img_style = "width: 1400px; max-width: none;"
-        else: # "完整 A4 (符合頁面)"
+        else:  # "完整 A4 (符合頁面)"
             img_style = "max-width: 100%; max-height: 800px; width: auto; height: auto;"
-            
-        html = f'''
+
+        html = f"""
         <div style="width:100%; overflow-x:auto; text-align:center; padding:10px 0;">
             <img src="data:image/jpeg;base64,{img_str}" style="{img_style} border-radius:8px; box-shadow: 0 4px 10px rgba(0,0,0,0.15);">
         </div>
-        '''
+        """
         st.markdown(html, unsafe_allow_html=True)
-    except Exception as e: st.error(f"渲染錯誤: {e}")
+    except Exception as e:
+        st.error(f"渲染錯誤: {e}")
+
 
 def export_merged_pdf(selected_items: list[dict]) -> bytes:
     writer = PdfWriter()
@@ -189,24 +219,29 @@ def export_merged_pdf(selected_items: list[dict]) -> bytes:
         pnum = int(item.get("page", 1))
         if rtype not in readers:
             fname = PDF_MAP.get(rtype)
-            if fname and (BASE_DIR / fname).exists(): readers[rtype] = PdfReader(BASE_DIR / fname)
-            else: continue
+            if fname and (BASE_DIR / fname).exists():
+                readers[rtype] = PdfReader(BASE_DIR / fname)
+            else:
+                continue
         reader = readers[rtype]
-        if 1 <= pnum <= len(reader.pages): writer.add_page(reader.pages[pnum - 1])
+        if 1 <= pnum <= len(reader.pages):
+            writer.add_page(reader.pages[pnum - 1])
     buffer = io.BytesIO()
     writer.write(buffer)
     return buffer.getvalue()
+
 
 # ─────────────────────────────────────────────
 # UI Entry Point
 # ─────────────────────────────────────────────
 
+
 def main():
     st.set_page_config(page_title="橡膠配方規格篩選系統", page_icon="🧪", layout="wide")
-    
+
     if "app_theme" not in st.session_state:
         st.session_state.app_theme = "Light"
-        
+
     st.markdown(COMMON_CSS, unsafe_allow_html=True)
     if st.session_state.app_theme == "Light":
         st.markdown(LIGHT_THEME_CSS, unsafe_allow_html=True)
@@ -221,35 +256,60 @@ def main():
     with st.sidebar:
         st.markdown("## 🔬 規格篩選條件")
         st.markdown("---")
-        st.markdown('<p class="filter-header">勾選要篩選的規格</p>', unsafe_allow_html=True)
+        st.markdown(
+            '<p class="filter-header">勾選要篩選的規格</p>', unsafe_allow_html=True
+        )
 
         def parse_val(v):
-            try: return float(v) if v and v.strip() else None
-            except: return None
+            try:
+                return float(v) if v and v.strip() else None
+            except:
+                return None
 
         active_filters: dict = {}
         for field in FIELDS:
             key, label, unit = field["key"], field["label"], field["unit"]
             enabled = st.checkbox(f"{label}", key=f"chk_{key}")
-            
+
             display_unit = unit
             conv_factor = 1.0
             if enabled and key in ["tensile_strength", "modulus_100", "modulus_300"]:
-                unit_choice = st.radio(f"{label}單位", ["MPa", "psi", "kg/cm²"], horizontal=True, key=f"unit_{key}", label_visibility="collapsed")
+                unit_choice = st.radio(
+                    f"{label}單位",
+                    ["MPa", "psi", "kg/cm²"],
+                    horizontal=True,
+                    key=f"unit_{key}",
+                    label_visibility="collapsed",
+                )
                 display_unit = unit_choice
-                if unit_choice == "psi": conv_factor = 1 / 145.0377
-                elif unit_choice == "kg/cm²": conv_factor = 1 / 10.197
+                if unit_choice == "psi":
+                    conv_factor = 1 / 145.0377
+                elif unit_choice == "kg/cm²":
+                    conv_factor = 1 / 10.197
 
             if enabled:
                 c1, c2 = st.columns(2)
-                with c1: lo_str = st.text_input(f"下限 ({display_unit})" if display_unit else "下限", value="", key=f"lo_{key}")
-                with c2: hi_str = st.text_input(f"上限 ({display_unit})" if display_unit else "上限", value="", key=f"hi_{key}")
+                with c1:
+                    lo_str = st.text_input(
+                        f"下限 ({display_unit})" if display_unit else "下限",
+                        value="",
+                        key=f"lo_{key}",
+                    )
+                with c2:
+                    hi_str = st.text_input(
+                        f"上限 ({display_unit})" if display_unit else "上限",
+                        value="",
+                        key=f"hi_{key}",
+                    )
                 lo, hi = parse_val(lo_str), parse_val(hi_str)
-                
-                if lo is not None: lo *= conv_factor
-                if hi is not None: hi *= conv_factor
-                
-                if lo is not None or hi is not None: active_filters[key] = {"lo": lo, "hi": hi}
+
+                if lo is not None:
+                    lo *= conv_factor
+                if hi is not None:
+                    hi *= conv_factor
+
+                if lo is not None or hi is not None:
+                    active_filters[key] = {"lo": lo, "hi": hi}
             st.markdown("---")
 
     # ─────────────────────────────────────────────
@@ -260,7 +320,12 @@ def main():
         st.title("🧪 橡膠配方規格篩選系統")
     with col_theme:
         st.markdown('<div style="margin-bottom:15px"></div>', unsafe_allow_html=True)
-        new_theme = st.selectbox("🌓 主題", ["Light", "Dark"], index=0 if st.session_state.app_theme == "Light" else 1, label_visibility="collapsed")
+        new_theme = st.selectbox(
+            "🌓 主題",
+            ["Light", "Dark"],
+            index=0 if st.session_state.app_theme == "Light" else 1,
+            label_visibility="collapsed",
+        )
         if new_theme != st.session_state.app_theme:
             st.session_state.app_theme = new_theme
             st.rerun()
@@ -270,51 +335,92 @@ def main():
     # ─────────────────────────────────────────────
     st.markdown('<div class="section-box">', unsafe_allow_html=True)
     st.markdown('<p class="filter-header">選擇膠種分組</p>', unsafe_allow_html=True)
-    selected_rubber_types = st.pills("膠種", RUBBER_TYPES, selection_mode="multi", label_visibility="collapsed")
-    st.markdown('</div>', unsafe_allow_html=True)
+    selected_rubber_types = st.pills(
+        "膠種", RUBBER_TYPES, selection_mode="multi", label_visibility="collapsed"
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # Filter
     filtered = apply_filters(records, selected_rubber_types, active_filters)
-    
+
+    # 若篩選後資料有 durometer，但 hardness 為 None，直接補上以便表格顯示
+    for rec in filtered:
+        if rec.get("hardness") is None and rec.get("durometer") is not None:
+            rec["hardness"] = rec["durometer"]
+
     # ─────────────────────────────────────────────
     # [D] Results Grid (全寬)
     # ─────────────────────────────────────────────
     st.markdown('<div class="section-box">', unsafe_allow_html=True)
-    st.markdown(f'<div class="result-chip">🎯 找到 {len(filtered)} 筆配方</div>', unsafe_allow_html=True)
-    
+    st.markdown(
+        f'<div class="result-chip">🎯 找到 {len(filtered)} 筆配方</div>',
+        unsafe_allow_html=True,
+    )
+
     if len(filtered) == 0:
         st.warning("無符合結果。", icon="⚠️")
         selected_items = []
     else:
         df = pd.DataFrame(filtered)
-        display_cols = ["rubber_type", "title", "hardness", "tensile_strength", "elongation", "modulus_100", "modulus_300", "compression_set", "specific_gravity"]
+        display_cols = [
+            "rubber_type",
+            "title",
+            "hardness",
+            "tensile_strength",
+            "elongation",
+            "modulus_100",
+            "modulus_300",
+            "compression_set",
+            "specific_gravity",
+        ]
         existing_cols = [c for c in display_cols if c in df.columns]
         display_df = df[existing_cols].copy()
-        
+
         rename_map = {
-            "rubber_type": "Type", "title": "Title", "hardness": "Hardness", 
-            "tensile_strength": "TS (MPa)", "elongation": "Elong (%)",
-            "modulus_100": "100% Mod", "modulus_300": "300% Mod",
-            "compression_set": "CS (%)", "specific_gravity": "Sp.Gr"
+            "rubber_type": "Type",
+            "title": "Title",
+            "hardness": "Hardness",
+            "tensile_strength": "TS (MPa)",
+            "elongation": "Elong (%)",
+            "modulus_100": "100% Mod",
+            "modulus_300": "300% Mod",
+            "compression_set": "CS (%)",
+            "specific_gravity": "Sp.Gr",
         }
         display_df.rename(columns=rename_map, inplace=True)
-        
+
         col_cfg = {}
-        if "Hardness" in display_df.columns: col_cfg["Hardness"] = st.column_config.NumberColumn("Hardness", format="%d")
-        if "Elong (%)" in display_df.columns: col_cfg["Elong (%)"] = st.column_config.NumberColumn("Elong (%)", format="%d")
+        if "Hardness" in display_df.columns:
+            col_cfg["Hardness"] = st.column_config.NumberColumn("Hardness", format="%d")
+        if "Elong (%)" in display_df.columns:
+            col_cfg["Elong (%)"] = st.column_config.NumberColumn(
+                "Elong (%)", format="%d"
+            )
         for c in ["TS (MPa)", "100% Mod", "300% Mod", "CS (%)", "Sp.Gr"]:
-            if c in display_df.columns: col_cfg[c] = st.column_config.NumberColumn(c, format="%.2f")
-        
-        event = st.dataframe(display_df, use_container_width=True, hide_index=True, height=450, on_select="rerun", selection_mode="multi-row", column_config=col_cfg)
+            if c in display_df.columns:
+                col_cfg[c] = st.column_config.NumberColumn(c, format="%.2f")
+
+        event = st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            height=450,
+            on_select="rerun",
+            selection_mode="multi-row",
+            column_config=col_cfg,
+        )
         selected_rows = event.selection.rows
         selected_items = [filtered[i] for i in selected_rows] if selected_rows else []
-    st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
     # ─────────────────────────────────────────────
     # [F] & [E] (垂直排序於下方)
     # ─────────────────────────────────────────────
     if not selected_items:
-        st.markdown('<div class="section-box" style="text-align:center; padding:60px 20px;"><div style="font-size:3rem">📋</div><div style="margin-top:10px;">請從上方表格中勾選配方以顯示預覽區域</div></div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="section-box" style="text-align:center; padding:60px 20px;"><div style="font-size:3rem">📋</div><div style="margin-top:10px;">請從上方表格中勾選配方以顯示預覽區域</div></div>',
+            unsafe_allow_html=True,
+        )
     else:
         # [F] PDF Viewport (全寬預覽)
         st.markdown('<div class="section-box">', unsafe_allow_html=True)
@@ -324,31 +430,50 @@ def main():
         with col_f3:
             zoom_options = ["完整 A4 (符合頁面)", "符合頁寬", "原始高畫質放大"]
             if hasattr(st, "segmented_control"):
-                zoom_mode = st.segmented_control("檢視選項", zoom_options, default="完整 A4 (符合頁面)", label_visibility="collapsed")
+                zoom_mode = st.segmented_control(
+                    "檢視選項",
+                    zoom_options,
+                    default="完整 A4 (符合頁面)",
+                    label_visibility="collapsed",
+                )
             else:
-                zoom_mode = st.radio("檢視選項", zoom_options, horizontal=True, label_visibility="collapsed")
-            if not zoom_mode: zoom_mode = "完整 A4 (符合頁面)"
-            
+                zoom_mode = st.radio(
+                    "檢視選項",
+                    zoom_options,
+                    horizontal=True,
+                    label_visibility="collapsed",
+                )
+            if not zoom_mode:
+                zoom_mode = "完整 A4 (符合頁面)"
+
         st.markdown("---")
         with st.container(height=900):
             for i, item in enumerate(selected_items):
                 rtype = item.get("rubber_type", "EPDM")
                 pnum = int(item.get("page", 1))
-                st.markdown(f"**#{i+1} [{rtype}] {item.get('title','')}** (Page {pnum})")
+                st.markdown(
+                    f"**#{i+1} [{rtype}] {item.get('title','')}** (Page {pnum})"
+                )
                 render_pdf_page_html(rtype, pnum, zoom_mode)
                 st.markdown("---")
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
         # [E] Export Hub (置底下載)
         st.markdown('<div class="section-box">', unsafe_allow_html=True)
         st.markdown("### 📥 匯出選取的頁面")
         c_fn, c_btn = st.columns([3, 1])
         with c_fn:
-            r_set = list(set([i.get("rubber_type","") for i in selected_items]))
+            r_set = list(set([i.get("rubber_type", "") for i in selected_items]))
             r_str = r_set[0].lower() if len(r_set) == 1 else "rubber"
-            h_vals = [str(int(i["hardness"])) for i in selected_items if i.get("hardness") is not None]
+            h_vals = [
+                str(int(i["hardness"]))
+                for i in selected_items
+                if i.get("hardness") is not None
+            ]
             h_str = f"{h_vals[0]}" if len(set(h_vals)) == 1 else ""
-            title_str = f"_{selected_items[0]['title']}" if len(selected_items) == 1 else ""
+            title_str = (
+                f"_{selected_items[0]['title']}" if len(selected_items) == 1 else ""
+            )
             date_str = datetime.now().strftime("%Y%m%d")
             default_fn = f"{r_str}{h_str}{title_str}_{date_str}.pdf".replace(" ", "_")
             final_fn = st.text_input("存檔名稱設定", value=default_fn)
@@ -356,8 +481,15 @@ def main():
             st.markdown('<div style="margin-top:28px"></div>', unsafe_allow_html=True)
             if st.button(f"🚀 合併並下載 PDF"):
                 pdf_bytes = export_merged_pdf(selected_items)
-                st.download_button("💾 點擊下載", data=pdf_bytes, file_name=final_fn, mime="application/pdf", use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+                st.download_button(
+                    "💾 點擊下載",
+                    data=pdf_bytes,
+                    file_name=final_fn,
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+        st.markdown("</div>", unsafe_allow_html=True)
+
 
 if __name__ == "__main__":
     main()
