@@ -62,10 +62,6 @@ h1 { font-size: 2.2rem !important; font-weight: 800 !important; letter-spacing: 
 div.stButton > button { border: none !important; border-radius: 8px !important; font-weight: 600 !important; transition: all 0.2s !important; width: 100%; }
 .stCheckbox label { font-weight: 600 !important; font-size: 0.9rem !important; }
 
-/* [A] Sidebar Item Compactness */
-div[data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div { padding-top: 0 !important; padding-bottom: 0.2rem !important; }
-div[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p { margin-bottom: 0px !important; }
-div[data-testid="stSidebar"] hr { margin: 0.5rem 0 !important; }
 
 /* Section Box Styling for boundaries */
 .section-box {
