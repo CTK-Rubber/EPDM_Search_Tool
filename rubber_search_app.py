@@ -233,8 +233,8 @@ def main():
             enabled = st.checkbox(f"{label}", key=f"chk_{key}")
             if enabled:
                 c1, c2 = st.columns(2)
-                with c1: lo = st.number_input(f"下限 {unit}", value=None, key=f"lo_{key}", label_visibility="collapsed")
-                with c2: hi = st.number_input(f"上限 {unit}", value=None, key=f"hi_{key}", label_visibility="collapsed")
+                with c1: lo = st.number_input(f"下限 ({unit})" if unit else "下限", value=None, key=f"lo_{key}")
+                with c2: hi = st.number_input(f"上限 ({unit})" if unit else "上限", value=None, key=f"hi_{key}")
                 if lo is not None or hi is not None: active_filters[key] = {"lo": lo, "hi": hi}
             st.markdown("---")
 
