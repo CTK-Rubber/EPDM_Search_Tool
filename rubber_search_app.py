@@ -223,14 +223,19 @@ def main():
         st.markdown("---")
         st.markdown('<p class="filter-header">勾選要篩選的規格</p>', unsafe_allow_html=True)
 
+        def parse_val(v):
+            try: return float(v) if v and v.strip() else None
+            except: return None
+
         active_filters: dict = {}
         for field in FIELDS:
             key, label, unit = field["key"], field["label"], field["unit"]
             enabled = st.checkbox(f"{label}", key=f"chk_{key}")
             if enabled:
                 c1, c2 = st.columns(2)
-                with c1: lo = st.number_input(f"下限 ({unit})" if unit else "下限", value=None, key=f"lo_{key}")
-                with c2: hi = st.number_input(f"上限 ({unit})" if unit else "上限", value=None, key=f"hi_{key}")
+                with c1: lo_str = st.text_input(f"下限 ({unit})" if unit else "下限", value="", key=f"lo_{key}")
+                with c2: hi_str = st.text_input(f"上限 ({unit})" if unit else "上限", value="", key=f"hi_{key}")
+                lo, hi = parse_val(lo_str), parse_val(hi_str)
                 if lo is not None or hi is not None: active_filters[key] = {"lo": lo, "hi": hi}
             st.markdown("---")
 
