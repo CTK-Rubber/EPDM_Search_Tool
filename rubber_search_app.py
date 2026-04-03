@@ -86,7 +86,7 @@ h1 { background: linear-gradient(90deg, #1e40af, #3b82f6); -webkit-background-cl
 div.stButton > button { background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important; color: white !important; }
 .stCheckbox label { color: #334155 !important; }
 hr { border-color: #e2e8f0 !important; }
-div[data-testid="stNumberInput"] input { background: #ffffff !important; border: 1px solid #cbd5e1 !important; color: #1e293b !important; }
+div[data-testid="stNumberInput"] input, div[data-testid="stTextInput"] input { background: #ffffff !important; border: 1px solid #cbd5e1 !important; color: #1e293b !important; }
 div[data-testid="stPills"] button { background: #ffffff !important; border: 1px solid #e2e8f0 !important; color: #475569 !important; }
 div[data-testid="stPills"] button[aria-pressed="true"] { background: #3b82f6 !important; color: white !important; }
 div[data-testid="stDataFrame"] { background: #ffffff !important; border: 1px solid #e2e8f0 !important; }
@@ -105,7 +105,7 @@ h1 { background: linear-gradient(90deg, #a78bfa, #60a5fa); -webkit-background-cl
 div.stButton > button { background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%) !important; color: white !important; }
 .stCheckbox label { color: #cbd5e1 !important; }
 hr { border-color: #1f2937 !important; }
-div[data-testid="stNumberInput"] input { background: #1f2937 !important; border: 1px solid #374151 !important; color: #f8fafc !important; }
+div[data-testid="stNumberInput"] input, div[data-testid="stTextInput"] input { background: #1f2937 !important; border: 1px solid #374151 !important; color: #f8fafc !important; }
 div[data-testid="stPills"] button { background: #1f2937 !important; border: 1px solid #374151 !important; color: #cbd5e1 !important; }
 div[data-testid="stPills"] button[aria-pressed="true"] { background: #7c3aed !important; color: white !important; }
 div[data-testid="stDataFrame"] { background: #1f2937 !important; border: 1px solid #374151 !important; }
@@ -231,11 +231,24 @@ def main():
         for field in FIELDS:
             key, label, unit = field["key"], field["label"], field["unit"]
             enabled = st.checkbox(f"{label}", key=f"chk_{key}")
+            
+            display_unit = unit
+            conv_factor = 1.0
+            if enabled and key in ["tensile_strength", "modulus_100", "modulus_300"]:
+                unit_choice = st.radio(f"{label}單位", ["MPa", "psi", "kg/cm²"], horizontal=True, key=f"unit_{key}", label_visibility="collapsed")
+                display_unit = unit_choice
+                if unit_choice == "psi": conv_factor = 1 / 145.0377
+                elif unit_choice == "kg/cm²": conv_factor = 1 / 10.197
+
             if enabled:
                 c1, c2 = st.columns(2)
-                with c1: lo_str = st.text_input(f"下限 ({unit})" if unit else "下限", value="", key=f"lo_{key}")
-                with c2: hi_str = st.text_input(f"上限 ({unit})" if unit else "上限", value="", key=f"hi_{key}")
+                with c1: lo_str = st.text_input(f"下限 ({display_unit})" if display_unit else "下限", value="", key=f"lo_{key}")
+                with c2: hi_str = st.text_input(f"上限 ({display_unit})" if display_unit else "上限", value="", key=f"hi_{key}")
                 lo, hi = parse_val(lo_str), parse_val(hi_str)
+                
+                if lo is not None: lo *= conv_factor
+                if hi is not None: hi *= conv_factor
+                
                 if lo is not None or hi is not None: active_filters[key] = {"lo": lo, "hi": hi}
             st.markdown("---")
 
@@ -267,21 +280,28 @@ def main():
     # [D] Results Grid (全寬)
     # ─────────────────────────────────────────────
     st.markdown('<div class="section-box">', unsafe_allow_html=True)
-    st.markdown(f'<div class="result-chip">🎯 找到 {len(filtered)} 筆配方</div>', unsafe_allow_html=True)
+    c_res1, c_res2 = st.columns([1, 1])
+    with c_res1:
+        st.markdown(f'<div class="result-chip">🎯 找到 {len(filtered)} 筆配方</div>', unsafe_allow_html=True)
+    with c_res2:
+        st.markdown('<div style="text-align: right;">', unsafe_allow_html=True)
+        font_size = st.slider("表格文字大小", min_value=10, max_value=24, value=14, step=1, label_visibility="collapsed")
+        st.markdown('</div>', unsafe_allow_html=True)
     
     if len(filtered) == 0:
         st.warning("無符合結果。", icon="⚠️")
         selected_items = []
     else:
         df = pd.DataFrame(filtered)
-        display_cols = ["rubber_type", "printed_page", "page", "title", "supplier", "hardness", "tensile_strength", "elongation"]
+        display_cols = ["rubber_type", "title", "hardness", "tensile_strength", "elongation"]
         existing_cols = [c for c in display_cols if c in df.columns]
         display_df = df[existing_cols].copy()
         
-        rename_map = {"rubber_type": "Type", "page": "PDF Page", "printed_page": "Book Page", "title": "Title", "supplier": "Supplier", "hardness": "Hardness", "tensile_strength": "TS (MPa)", "elongation": "Elong (%)"}
+        rename_map = {"rubber_type": "Type", "title": "Title", "hardness": "Hardness", "tensile_strength": "TS (MPa)", "elongation": "Elong (%)"}
         display_df.rename(columns=rename_map, inplace=True)
         
-        event = st.dataframe(display_df, use_container_width=True, hide_index=True, height=450, on_select="rerun", selection_mode="multi-row")
+        styled_df = display_df.style.set_properties(**{'font-size': f'{font_size}px'})
+        event = st.dataframe(styled_df, use_container_width=True, hide_index=True, height=450, on_select="rerun", selection_mode="multi-row")
         selected_rows = event.selection.rows
         selected_items = [filtered[i] for i in selected_rows] if selected_rows else []
     st.markdown('</div>', unsafe_allow_html=True)
