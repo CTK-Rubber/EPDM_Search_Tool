@@ -124,6 +124,10 @@ def load_data() -> list[dict]:
         return []
     try:
         data = json.loads(JSON_PATH.read_text(encoding="utf-8"))
+
+        # 按 (rubber_type, title, page) 三元組去重，避免同頁多欄重複
+        seen = set()
+        deduplicated = []
         for r in data:
             if "rubber_type" not in r:
                 r["rubber_type"] = "EPDM"
@@ -136,7 +140,13 @@ def load_data() -> list[dict]:
                 except Exception:
                     r["hardness"] = duro
 
-        return data
+            # 去重：同一個 (rubber_type, title, page) 組合只保留第一筆
+            key = (r.get("rubber_type"), r.get("title"), r.get("page"))
+            if key not in seen:
+                seen.add(key)
+                deduplicated.append(r)
+
+        return deduplicated
     except Exception:
         return []
 
@@ -361,7 +371,17 @@ def main():
         st.warning("無符合結果。", icon="⚠️")
         selected_items = []
     else:
-        df = pd.DataFrame(filtered)
+        # 按 title 分組，每個 title 只顯示一次（取第一筆作為代表）
+        title_groups = {}
+        for rec in filtered:
+            key = rec.get("title", "Unknown")
+            if key not in title_groups:
+                title_groups[key] = []
+            title_groups[key].append(rec)
+
+        # 建立分組後的表格資料（每個 title 一行）
+        grouped_records = [group[0] for group in title_groups.values()]
+        df = pd.DataFrame(grouped_records)
         display_cols = [
             "rubber_type",
             "title",
@@ -410,7 +430,12 @@ def main():
             column_config=col_cfg,
         )
         selected_rows = event.selection.rows
-        selected_items = [filtered[i] for i in selected_rows] if selected_rows else []
+        # 當用戶選中行時，找出所有相同標題的記錄（包括跨頁）
+        selected_items = []
+        if selected_rows:
+            for row_idx in selected_rows:
+                selected_title = grouped_records[row_idx].get("title")
+                selected_items.extend(title_groups.get(selected_title, []))
     st.markdown("</div>", unsafe_allow_html=True)
 
     # ─────────────────────────────────────────────
@@ -448,11 +473,19 @@ def main():
 
         st.markdown("---")
         with st.container(height=900):
+            # 按 (rubber_type, page) 去重，避免同一頁面重複渲染
+            rendered_pages = set()
             for i, item in enumerate(selected_items):
                 rtype = item.get("rubber_type", "EPDM")
                 pnum = int(item.get("page", 1))
+                page_key = (rtype, pnum)
+
+                if page_key in rendered_pages:
+                    continue  # 跳過已渲染的頁面
+                rendered_pages.add(page_key)
+
                 st.markdown(
-                    f"**#{i+1} [{rtype}] {item.get('title','')}** (Page {pnum})"
+                    f"**#{len(rendered_pages)} [{rtype}] {item.get('title','')}** (Page {pnum})"
                 )
                 render_pdf_page_html(rtype, pnum, zoom_mode)
                 st.markdown("---")
