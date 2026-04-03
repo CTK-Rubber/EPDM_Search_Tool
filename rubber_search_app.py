@@ -280,28 +280,32 @@ def main():
     # [D] Results Grid (全寬)
     # ─────────────────────────────────────────────
     st.markdown('<div class="section-box">', unsafe_allow_html=True)
-    c_res1, c_res2 = st.columns([1, 1])
-    with c_res1:
-        st.markdown(f'<div class="result-chip">🎯 找到 {len(filtered)} 筆配方</div>', unsafe_allow_html=True)
-    with c_res2:
-        st.markdown('<div style="text-align: right;">', unsafe_allow_html=True)
-        font_size = st.slider("表格文字大小", min_value=10, max_value=24, value=14, step=1, label_visibility="collapsed")
-        st.markdown('</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="result-chip">🎯 找到 {len(filtered)} 筆配方</div>', unsafe_allow_html=True)
     
     if len(filtered) == 0:
         st.warning("無符合結果。", icon="⚠️")
         selected_items = []
     else:
         df = pd.DataFrame(filtered)
-        display_cols = ["rubber_type", "title", "hardness", "tensile_strength", "elongation"]
+        display_cols = ["rubber_type", "title", "hardness", "tensile_strength", "elongation", "modulus_100", "modulus_300", "compression_set", "specific_gravity"]
         existing_cols = [c for c in display_cols if c in df.columns]
         display_df = df[existing_cols].copy()
         
-        rename_map = {"rubber_type": "Type", "title": "Title", "hardness": "Hardness", "tensile_strength": "TS (MPa)", "elongation": "Elong (%)"}
+        rename_map = {
+            "rubber_type": "Type", "title": "Title", "hardness": "Hardness", 
+            "tensile_strength": "TS (MPa)", "elongation": "Elong (%)",
+            "modulus_100": "100% Mod", "modulus_300": "300% Mod",
+            "compression_set": "CS (%)", "specific_gravity": "Sp.Gr"
+        }
         display_df.rename(columns=rename_map, inplace=True)
         
-        styled_df = display_df.style.set_properties(**{'font-size': f'{font_size}px'})
-        event = st.dataframe(styled_df, use_container_width=True, hide_index=True, height=450, on_select="rerun", selection_mode="multi-row")
+        col_cfg = {}
+        if "Hardness" in display_df.columns: col_cfg["Hardness"] = st.column_config.NumberColumn("Hardness", format="%d")
+        if "Elong (%)" in display_df.columns: col_cfg["Elong (%)"] = st.column_config.NumberColumn("Elong (%)", format="%d")
+        for c in ["TS (MPa)", "100% Mod", "300% Mod", "CS (%)", "Sp.Gr"]:
+            if c in display_df.columns: col_cfg[c] = st.column_config.NumberColumn(c, format="%.2f")
+        
+        event = st.dataframe(display_df, use_container_width=True, hide_index=True, height=450, on_select="rerun", selection_mode="multi-row", column_config=col_cfg)
         selected_rows = event.selection.rows
         selected_items = [filtered[i] for i in selected_rows] if selected_rows else []
     st.markdown('</div>', unsafe_allow_html=True)
