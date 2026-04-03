@@ -161,7 +161,7 @@ def render_pdf_page_html(rubber_type: str, page_num: int, zoom_mode: str = "å®Œæ
         return
     try:
         page = doc.pages[page_num - 1]
-        img = page.to_image(resolution=150).original
+        img = page.to_image(resolution=300).original
         buf = io.BytesIO()
         img.save(buf, format="JPEG")
         img_str = base64.b64encode(buf.getvalue()).decode()
